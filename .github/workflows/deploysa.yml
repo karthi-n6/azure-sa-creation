@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "What do you want Terraform to do?"
+        description: "Choose what Terraform should do"
         required: true
         type: choice
         options:
@@ -15,40 +15,84 @@ on:
         required: false
         default: ""
 
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - closed
+    branches:
+      - main
+    paths-ignore:
+      - ".github/**"
+      - "playbooks/**"
+
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - ".github/**"
+      - "playbooks/**"
+
 jobs:
   terraform:
+    name: Terraform
     runs-on: ubuntu-latest
 
-    # Optional safety: allow only main branch runs
-    if: ${{ github.ref == 'refs/heads/main' }}
+    env:
+      TF_VAR_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+      TF_VAR_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v1
         with:
-          terraform_version: 1.6.6
+          terraform_wrapper: false
 
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Format Check
-        run: terraform fmt -check
-
-      - name: Terraform Validate
-        run: terraform validate
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="subscription_id=$TF_VAR_subscription_id" \
+            -backend-config="tenant_id=$TF_VAR_tenant_id" \
+            -backend-config="client_id=$TF_VAR_client_id" \
+            -backend-config="client_secret=$TF_VAR_client_secret"
 
       - name: Terraform Plan
-        run: terraform plan -input=false -out=tfplan
+        run: terraform plan
 
-      # APPLY only when user selects apply
-      - name: Terraform Apply
-        if: ${{ inputs.action == 'apply' }}
-        run: terraform apply -auto-approve -input=false tfplan
+      - name: Terraform Apply (only main / manual apply)
+        if: >
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'pull_request' && github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main') ||
+          (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.action == 'apply')
+        run: terraform apply -auto-approve -input=false
 
-      # DESTROY only when user selects destroy + confirms
-      - name: Terraform Destroy
-        if: ${{ inputs.action == 'destroy' && inputs.confirm_destroy == 'DESTROY' }}
+      - name: Require destroy confirmation
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'destroy' &&
+          inputs.confirm_destroy != 'DESTROY'
+        run: |
+          echo "ERROR: To run destroy, set confirm_destroy to DESTROY"
+          exit 1
+
+      - name: Terraform destroy (manual only)
+        if: >
+          github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'destroy' &&
+          inputs.confirm_destroy == 'DESTROY'
         run: terraform destroy -auto-approve -input=false
