@@ -1,4 +1,4 @@
-name: Terraform (Manual: Apply or Destroy)
+name: Terraform Deploy VM
 
 on:
   workflow_dispatch:
