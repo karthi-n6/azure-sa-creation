@@ -16,7 +16,7 @@ resource "azurerm_storage_account" "terraform_state" {
   }
 }
 
-# Create a Storage container
+## Create a Storage container
 resource "azurerm_storage_container" "terraform_state" {
   name                  = var.container_name
   storage_account_name  = var.storage_account_name
